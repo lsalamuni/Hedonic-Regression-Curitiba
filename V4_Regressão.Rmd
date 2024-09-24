@@ -1,0 +1,508 @@
+---
+title: "V1_Regressão"
+author: "Lucas Salamuni"
+date: "2024-05-04"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+# 1. Packages
+
+## 1.1. Retrieving Packages
+```{r message=FALSE, warning=FALSE, echo = TRUE}
+
+pacotes <- c("tidyverse", "factoextra", "readxl", "ggplot2", "writexl",
+             "cowplot", "car", "lmtest", "psych", "car", "tseries",
+             "whitestrap", "jtools", "sandwich", "foreign", "plm") 
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){ 
+  instalador <- pacotes[!pacotes %in% installed.packages()] 
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T)
+} else {
+  sapply(pacotes, require, character = T)
+}
+
+```
+
+---
+
+# 2. Exploratory Analysis
+
+## 2.1. Accessing the Data
+```{r eval=FALSE, include=FALSE}
+
+low_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Low_tier.xlsx")
+count(low_tier)
+
+mid_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Medium_tier.xlsx")
+count(mid_tier)
+
+high_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/High_tier.xlsx")
+count(high_tier)
+
+```
+
+## 2.2. Checking price trends using a linear function form
+```{r eval=FALSE, include=FALSE}
+
+low_tier %>% 
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+mid_tier %>%
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+high_tier %>%
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+```
+
+* NOTE 1 = Linear models assume that Y exhibits constant absolute increases (or decreases) given absolute variations in X. Thus, the marginal change in the expected value of Y is the same for any value of X.
+
+## 2.3. Checking price trends using a semi-logarithmic function form
+```{r eval=FALSE, include=FALSE}
+
+low_tier %>% 
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(trans = "log") +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+mid_tier %>%
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(trans = "log") +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+
+high_tier %>%
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(trans = "log") +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+```
+
+* NOTE 2 = Semi-logarithmic (or log-linear) models assume that Y exhibits exponential growth (or decay) in relation to absolute variations in X.
+
+## 2.4. Checking price trends using a double logarithmic function form
+```{r eval=FALSE, include=FALSE}
+
+low_tier %>% 
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  scale_x_continuous(trans = "log") +
+  scale_y_continuous(trans = "log") +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+mid_tier %>%
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  scale_x_continuous(trans = "log") +
+  scale_y_continuous(trans = "log") +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+high_tier %>%
+  ggplot(aes(x = Area_sqm,
+             y = Rent)) +
+  geom_point(alpha = 0.5) +
+  scale_x_continuous(trans = "log") +
+  scale_y_continuous(trans = "log") +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red")
+
+```
+
+* NOTE 3 = Logarithmic (or double logarithmic) models assume that Y exhibits constant relative variations given relative variations in X. Thus, the beta coefficient would be a constant measure of the elasticity of Y in relation to X, meaning that it considers that relative variations in X are the same for any values of Xi and Yi.
+* NOTE 4 = It seems that the functional form that best fits the model, across all stratifications, is indeed the logarithmic form (log-log). In other words, the price of properties in its natural logarithmic form (lnY) is a function of the logarithms of the intrinsic characteristics of the property (I) and the urban amenities of its respective locality/neighborhood (A).
+
+---
+
+# 3. Logarithmic Function Form - First Stage of Rosen
+* NOTE 5 = Let v be the vector of housing characteristics (that is, intrinsic attributes + urban amenities of the locality), its logarithmic functional form is given by:
+
+$$ \ln p = \ln \beta_0 + \sum \beta_n \ln v_n $$
+
+## 3.1. Low Stratification
+
+### 3.1.1. First Regression (First Stage of Rosen - Only Intrinsic Characteristics)
+```{r echo = TRUE}
+
+low_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Low_tier.xlsx")
+
+low_tier_ln <- low_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density))
+
+low_lm_ln <- lm(Rent ~ ., 
+                data = low_tier_ln)
+
+plot(low_lm_ln)
+qplot(low_lm_ln$residuals)
+
+shapiro.test(low_lm_ln$residuals) 
+jarque.bera.test(low_lm_ln$residuals)
+
+summary(low_lm_ln)
+
+```
+* NOTE 5 = By analyzing the four residual plots of the regression (Residual vs Fitted; Normal Q-Q; Scale-Location; and Residual vs Leverage), it was possible to observe that some points were identified as potential outliers. This can interfere with the slope coefficient of the regression equation, as well as with R² and, above all, with the normality of the residual distribution. Therefore, I decided to analyze these cases separately and, if the hypothesis of incorrect data is confirmed, I will remove them from the dataset and proceed with a second regression.
+* NOTE 6 = The current result of the QQ-Plot suggests that the distribution curve of the residuals has extreme values in both tails. This may be due to inconsistent values in the dependent variable (prices).
+* NOTE 7 = As expected, all four points indicated in the plots (119, 593, 714, 1622) had inconsistent prices compared to the other datasets. As a result, I chose to exclude these values and redo the regression. To do this, I created a column based on the ratio between the Apartment Price (Rent) and the property area (Area_sqm), and then removed all values less than $(Q1 - (0.85) * IQR)$ and greater than $(Q3 + (0.85) * IQR)$.
+
+### 3.1.2. Second Regression (after removing outliers using the interquartile range (IQR) method)
+```{r echo = TRUE}
+
+low_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Low_tier.xlsx")
+
+low_tier <- low_tier %>%
+  mutate(`P/M` = Rent/Area_sqm)
+
+quantile(low_tier$`P/M`)
+
+Q1 <- quantile(low_tier$`P/M`)[2]
+Q3 <- quantile(low_tier$`P/M`)[4]
+
+IQR <- IQR(low_tier$`P/M`)
+
+below <- (Q1 - (0.85) * IQR)
+below
+above <- (Q3 + (0.85) * IQR)
+above
+
+low_tier <- low_tier %>%
+  filter(`P/M` >= below & `P/M` <= above) %>%
+  select(-`P/M`)
+
+count(low_tier)
+
+low_tier_ln <- low_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density))
+
+low_lm_ln <- lm(Rent ~ ., 
+                data = low_tier_ln)
+
+plot(low_lm_ln)
+qplot(low_lm_ln$residuals)
+
+shapiro.test(low_lm_ln$residuals) 
+jarque.bera.test(low_lm_ln$residuals)
+
+bptest(low_lm_ln) 
+white_test(low_lm_ln) 
+
+durbinWatsonTest(low_lm_ln) 
+
+pairs.panels(low_tier_ln) 
+car::vif(low_lm_ln) 
+
+summary(low_lm_ln)
+
+```
+* NOTE 8 = Now, based on the analysis of the QQ-Plot, as well as the results of the Shapiro-Wilk and Jarque-Bera tests, the residuals appear to be normally distributed.
+* NOTE 9 = However, both the Breusch-Pagan test and the White test now suggest that the model has heteroscedasticity. As a result, the OLS estimators tend to be inconsistent. To address this issue, I intend to correct the OLS standard errors using the Newey-West procedure (generally effective for large samples).
+
+### 3.1.3. Addressing the heteroscedasticity of the model using the Newey-West procedure
+```{r echo = TRUE}
+
+coeftest(low_lm_ln, vcov = NeweyWest(low_lm_ln))
+
+```
+* NOTE 10 = Based on the results obtained from the Newey-West procedure, most of the independent variables (except for the number of bedrooms, hospitals per 1,000 inhabitants, shopping malls per 1,000 inhabitants, and private schools per 1,000 inhabitants) are statistically significant.
+
+## 3.2. Medium Stratification
+
+### 3.2.1. First Regression (First Stage of Rosen - Only Intrinsic Characteristics)
+```{r echo = TRUE}
+
+mid_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Medium_tier.xlsx")
+
+mid_tier_ln <- mid_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density))
+
+mid_lm_ln <- lm(Rent ~ ., 
+                data = mid_tier_ln)
+
+plot(mid_lm_ln)
+qplot(mid_lm_ln$residuals)
+
+shapiro.test(mid_lm_ln$residuals) 
+jarque.bera.test(mid_lm_ln$residuals)
+
+summary(mid_lm_ln)
+
+```
+* NOTE 11 = Just as with the low stratification regression, the outliers in the medium stratification appear to be compromising the normality of the residuals in the logarithmic regression of medium stratification. Therefore, I will proceed with the exclusion of these outliers using the interquartile range method and redo the regression.
+
+### 3.2.2. Second Regression (after removing outliers using the interquartile range (IQR) method)
+```{r echo = TRUE}
+
+mid_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Medium_tier.xlsx")
+
+mid_tier <- mid_tier %>%
+  mutate(`P/M` = Rent/Area_sqm)
+
+quantile(mid_tier$`P/M`)
+
+Q1 <- quantile(mid_tier$`P/M`)[2]
+Q3 <- quantile(mid_tier$`P/M`)[4]
+
+IQR <- IQR(mid_tier$`P/M`)
+
+below <- (Q1 - (0.85) * IQR)
+below
+above <- (Q3 + (0.85) * IQR)
+above
+
+mid_tier <- mid_tier %>%
+  filter(`P/M` >= below & `P/M` <= above) %>%
+  select(-`P/M`)
+
+count(mid_tier)
+
+mid_tier_ln <- mid_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density))
+
+mid_lm_ln <- lm(Rent ~ ., 
+                data = mid_tier_ln)
+
+plot(mid_lm_ln)
+qplot(mid_lm_ln$residuals)
+
+shapiro.test(mid_lm_ln$residuals) 
+jarque.bera.test(mid_lm_ln$residuals) 
+
+bptest(mid_lm_ln) 
+white_test(mid_lm_ln) 
+
+durbinWatsonTest(mid_lm_ln) 
+
+pairs.panels(mid_tier_ln) 
+car::vif(mid_lm_ln) 
+
+summary(mid_lm_ln)
+
+```
+* NOTE 12 = Just as with the low stratification regression, there are indications of heteroscedasticity in the medium stratification regression. Therefore, we proceed with the Newey-West procedure.  
+* NOTE 13 = Additionally, this model also seems to exhibit autocorrelation in its residuals. In this case, the autocorrelation may be due to some important variable that is being omitted and can also be corrected using the Newey-West procedure.
+
+### 3.2.3. Addressing the heteroscedasticity of the model using the Newey-West procedure
+```{r echo = TRUE}
+
+coeftest(mid_lm_ln, vcov = NeweyWest(mid_lm_ln))
+
+```
+
+## 3.3. High Stratification
+
+### 3.3.1. First Regression (First Stage of Rosen - Only Intrinsic Characteristics)
+```{r echo = TRUE}
+
+high_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/High_tier.xlsx")
+
+high_tier_ln <- high_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density))
+
+high_lm_ln <- lm(Rent ~ ., 
+                 data = high_tier_ln)
+
+plot(high_lm_ln)
+qplot(high_lm_ln$residuals)
+
+shapiro.test(high_lm_ln$residuals) #Pvalor <= 0.05: os resíduos não seguem uma distribuição normal.
+jarque.bera.test(high_lm_ln$residuals)
+
+summary(high_lm_ln)
+
+```
+* NOTE 14 = Just as with the low and medium stratification regressions, the outliers in the high stratification appear to be compromising the normality of the residuals in the logarithmic regression of high stratification. Therefore, I will proceed with the exclusion of these outliers using the interquartile range method and redo the regression.
+
+### 3.3.2. Second Regression (after removing outliers using the interquartile range (IQR) method)
+```{r echo = TRUE}
+
+high_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/High_tier.xlsx")
+
+high_tier <- high_tier %>%
+  mutate(`P/M` = Rent/Area_sqm)
+
+quantile(high_tier$`P/M`)
+
+Q1 <- quantile(high_tier$`P/M`)[2]
+Q3 <- quantile(high_tier$`P/M`)[4]
+
+IQR <- IQR(high_tier$`P/M`)
+
+below <- (Q1 - (0.65) * IQR)
+below
+above <- (Q3 + (0.65) * IQR)
+above
+
+high_tier <- high_tier %>%
+  filter(`P/M` >= below & `P/M` <= above) %>%
+  select(-`P/M`)
+
+count(high_tier)
+
+high_tier_ln <- high_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density))
+
+high_lm_ln <- lm(Rent ~ ., 
+                 data = high_tier_ln)
+
+plot(high_lm_ln)
+qplot(high_lm_ln$residuals)
+
+shapiro.test(high_lm_ln$residuals) 
+jarque.bera.test(high_lm_ln$residuals) 
+
+bptest(high_lm_ln) 
+white_test(high_lm_ln) 
+
+durbinWatsonTest(high_lm_ln) 
+
+pairs.panels(high_tier_ln) 
+car::vif(high_lm_ln) 
+
+summary(high_lm_ln)
+
+```
+* NOTE 15 = Just as with the lower stratification regressions, there are indications of heteroscedasticity in the high stratification regression. Therefore, we proceed with the Newey-West procedure.
+
+### 3.3.3. Addressing the heteroscedasticity of the model using the Newey-West procedure
+```{r echo = TRUE}
+
+coeftest(high_lm_ln, vcov = NeweyWest(high_lm_ln))
+
+```
+
+
+
+
+
+
+
+

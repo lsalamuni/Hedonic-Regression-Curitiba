@@ -1,0 +1,927 @@
+---
+title: "Housing - Rent Datasets, Curitiba"
+author: "Lucas Salamuni"
+date: "2024-03-08"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+# 1. PACKAGES
+
+
+## 1.1. Downloading packages
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+pacotes <- c("dplyr", "tidyverse", "rvest", "readr", "stringr", "curl", "tidyr",
+             "magrittr", "RSelenium", "netstat", "wdman", "openxlsx", "readxl") 
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){ 
+  instalador <- pacotes[!pacotes %in% installed.packages()] 
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T)
+} else {
+  sapply(pacotes, require, character = T)
+}
+
+```
+
+---
+
+# 2. DATA SCRAPING I AND PRELIMINAR WRANGLING - QUINTO ANDAR
+
+
+## 2.1. Data wrangling function I
+```{r echo=TRUE}
+
+extract_rental_info <- function() {
+  page_source <- remDr$getPageSource()[[1]] %>% read_html()
+  df <- page_source %>%
+    html_nodes("h2") %>%
+    html_text() %>%
+  tibble() %>%
+  slice_head(n = -2) %>%
+  rename(geral = 1) %>%
+  mutate(geral = paste0(geral, " ·")) %>%
+  group_by(observation_id = ceiling(row_number()/2)) %>%
+  summarise(geral = paste(geral, collapse = " ")) %>%
+  select(-observation_id) %>%
+  separate(geral, into = c("Type", "Address", "City"), 
+           sep = " ·", extra = "merge") %>%
+  mutate(City = str_replace(City, " ·", "")) %>%
+  separate(Address, into = c("Street", "Neighborhood"), 
+           sep = ", ", remove = TRUE) %>%
+  bind_cols(
+    remDr$getPageSource()[[1]] %>%
+      read_html() %>%
+      html_nodes("h3") %>%
+      html_text() %>%
+      tibble() %>%
+      slice_head(n = -4) %>%
+      rename(geral = 1) %>%
+      mutate(geral = paste0(geral, " ·")) %>%
+      group_by(observation_id = ceiling(row_number()/3)) %>%
+      summarise(geral = paste(geral, collapse = " ")) %>%
+      select(-observation_id) %>%
+      separate(geral, into = c("Total", "Rent", "Area_sqm",
+                               "N_rooms", "N_parking_spaces"), 
+               sep = " ·", extra = "merge") %>%
+      mutate(N_parking_spaces = str_replace(N_parking_spaces, " ·", "")) %>%
+      mutate(N_parking_spaces = str_replace_all(N_parking_spaces, " vaga(s)?", "")) %>%
+      mutate(N_rooms = str_replace_all(N_rooms, " quarto(s)?", "")) %>%
+      mutate(Area_sqm = str_replace_all(Area_sqm, "m²", "")) %>%
+      mutate(Rent = str_remove_all(str_remove_all(Rent, "R\\$"), "\\.")) %>%
+      mutate(Rent = str_remove_all(Rent, "aluguel")) %>%
+      mutate(Rent = str_trim(Rent, side = "left")) %>%
+      mutate(Total = str_remove_all(str_remove_all(Total, "R\\$"), "\\.")) %>%
+      mutate(Total = str_trim(Total, side = "left")) %>%
+      mutate(Total = str_remove_all(Total, "total")) %>%
+      mutate_at(vars(Total, Rent, Area_sqm, 
+                     N_rooms, N_parking_spaces), as.numeric) %>%
+      mutate(N_parking_spaces = replace_na(N_parking_spaces, 0))
+  ) %>%
+  relocate(Area_sqm, .after = "Type") %>%
+  relocate(N_rooms, .after = "Area_sqm") %>%
+  relocate(N_parking_spaces, .after = "N_rooms") %>%
+  relocate(Rent, .before = "Total")
+
+  return(df)
+}
+
+```
+
+
+## 2.2. Setting up RSelenium
+```{r eval=FALSE}
+
+selenium()
+
+selenium_object <- selenium(retcommand = TRUE,
+                            check = FALSE)
+selenium_object
+
+```
+
+
+## 2.3. Starting the server
+```{r eval=FALSE}
+
+rs_driver_object <- rsDriver(browser = "chrome",
+                             chromever = "129.0.6668.58",
+                             verbose = FALSE,
+                             port = free_port())
+
+```
+
+
+## 2.4. Scraping = QuintoAndar
+```{r eval=FALSE}
+
+iterations <- 74
+
+remDr <- rs_driver_object$client
+remDr$open()
+remDr$maxWindowSize()
+remDr$setTimeout(type = "script", milliseconds = 1 * 60 * 60 * 1000)
+remDr$navigate("https://www.quintoandar.com.br/alugar/imovel/curitiba-pr-brasil")
+
+page_source_cwb <- NULL
+for (i in 1:iterations) {
+  Sys.sleep(1)
+  css_selector <- sprintf("div.MuiBox-root:nth-child(%d) > button:nth-child(1)", (i-1)*4 + 6)
+  remDr$executeScript(sprintf("document.querySelector('%s').scrollIntoView();", css_selector))
+  Sys.sleep(1)
+  ver_mais_button <- remDr$findElement(using = "css selector", value = css_selector)
+  Sys.sleep(1)
+  ver_mais_button$clickElement()
+  Sys.sleep(3)
+  page_source_cwb <- c(page_source_cwb)
+}
+
+df_cwb <- extract_rental_info()
+
+remDr$close()
+
+```
+* NOTE: One of my challenges in developing a scraping function for Quinto Andar was the fact that, apparently, the HTML structure of the website changes constantly. Therefore, I had to create the function for this site twice. Hence, it wouldn't be surprising if the function in this script is obsolete. However, I didn't confirm this, as I didn't run this chunk after collecting the data I needed.
+
+
+```{r include=FALSE}
+
+df_cwb <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/CWB_Dataset_I-NW.xlsx")
+
+```
+
+---
+
+# 3. FURTHER DATA WRANGLING I - QUINTO ANDAR
+
+
+## 3.1. Checking for NAs
+```{r echo=TRUE}
+results <- vector("list", length = ncol(df_cwb))
+
+for (i in seq_along(names(df_cwb))) {
+  results[[i]] <- df_cwb %>%
+    summarise(NAs = sum(is.na(!!sym(names(df_cwb)[i]))))
+}
+
+results_df <- bind_rows(results, .id = "Column")
+
+print(results_df)
+
+```
+
+
+## 3.2. Removing empty spaces from the text columns
+```{r echo=TRUE}
+
+df_na <- df_cwb
+
+df_na <- df_na %>%
+  mutate_at(vars(Type, Street, Neighborhood, City), ~str_trim(as.character(.)))
+
+```
+
+
+## 3.3. Removing parenthesis and other special characters 
+```{r echo=TRUE}
+
+df_na <- df_na %>%
+  mutate(Neighborhood = str_replace_all(Neighborhood, "\\(.*?\\)", ""))
+
+```
+
+
+## 3.4. Checking for duplicated entries
+```{r echo=TRUE}
+
+duplicates <- df_na[duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", 
+                                         "N_bathrooms", "N_parking_spaces", "Street", 
+                                         "Neighborhood", "City", "Rent", "Total")]) 
+                    | duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                           "N_parking_spaces", "Street", "Neighborhood", 
+                                           "City", "Rent", "Total")], fromLast = TRUE), ]
+
+duplicates %>%
+  arrange(Street) %>%
+  head(10)
+
+```
+
+
+## 3.5. Removing duplicates from the dataset
+```{r echo=TRUE}
+
+df_na <- unique(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", "N_parking_spaces", 
+                          "Street", "Neighborhood", "City", "Rent", "Total")])
+
+duplicates <- df_na[duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                         "N_parking_spaces", "Street", "Neighborhood", 
+                                         "City", "Rent", "Total")]) 
+                    | duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                           "N_parking_spaces", "Street", "Neighborhood", 
+                                           "City", "Rent", "Total")], fromLast = TRUE), ]
+
+duplicates %>%
+  arrange(Street) %>%
+  head(10)
+
+```
+
+
+## 3.6. Standardizing the Type column
+```{r echo=TRUE}
+
+unique(df_na$Type)
+
+df_na <- df_na %>%
+  mutate(Type = case_when(
+    Type %in% c("Apartamento", "Studio e kitnet", "Casa em condomínio") ~ "Condominio",
+      TRUE ~ Type
+  ))
+
+unique(df_na$Type)
+
+```
+
+
+## 3.7. Checking for outliers in 'Area_sqm' column
+```{r echo=TRUE}
+
+df_na %>%
+  arrange(Area_sqm) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Area_sqm)) %>%
+  head(10)
+
+```
+
+
+## 3.8. Removing the 'Street' and 'Rent' columnns, and renaming 'Total' to 'Rent'
+```{r echo=TRUE}
+
+df_na <- df_na %>%
+  select(-c(Street, Rent)) %>%
+  rename(Rent = Total)
+
+```
+
+
+## 3.9. Checking for outliers in 'Neighborhood' column
+```{r echo=TRUE}
+
+df_na %>%
+  arrange(Neighborhood) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Neighborhood)) %>%
+  head(10)
+
+df_na <- df_na %>%
+  mutate(Neighborhood = iconv(Neighborhood, "UTF-8", "ASCII//TRANSLIT"))
+
+df_na %>%
+  arrange(Neighborhood) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Neighborhood)) %>%
+  head(10)
+
+```
+
+
+## 3.10. Saving the dataframe as an xlsx file
+```{r eval=FALSE}
+
+df_cwb <- df_na
+
+file <- "CWB_Dataset_I.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/", file)
+write.xlsx(df_cwb, folder, rowNames = FALSE)
+
+```
+
+---
+
+# 4. DATA SCRAPING II AND PRELIMINAR WRANGLING - IMÓVEL WEB
+
+
+## 4.1. Data wrangling function II
+```{r echo=TRUE}
+
+extract_rental_info_ii <- function() {
+  page_source <- remDr$getPageSource()[[1]] %>% read_html()
+  df <- page_source %>%
+    html_nodes("h3") %>%
+    html_text() %>%
+    tibble() %>%
+    rename(geral = 1) %>%
+    mutate(geral = paste0(geral, " ·")) %>%
+    group_by(observation_id = ceiling(row_number()/2)) %>%
+    summarise(geral = paste(geral, collapse = " ")) %>%
+    select(-observation_id) %>%
+    separate(geral, into = c("Infos", "Description"), sep = " ·", extra = "merge") %>%
+    separate(Infos, into = c("Area_sqm", "Infos"), sep = "tot.", extra = "merge") %>%
+    mutate(Area_sqm = str_replace_all(Area_sqm, "m²", "")) %>%
+    mutate(Infos = ifelse(!str_detect(Infos, "quartos"), 
+                          paste0("1 quartos", Infos), Infos)) %>%
+    separate(Infos, into = c("N_rooms", "Infos"), sep = "quartos", extra = "merge") %>%
+    separate(Infos, into = c("N_bathrooms", "N_parking_spaces"), sep = "ban.", 
+             extra = "merge") %>%
+    mutate(N_parking_spaces = str_replace(N_parking_spaces, "eiro", "")) %>%
+    mutate(N_parking_spaces = str_replace(N_parking_spaces, "vaga", "")) %>%
+    mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces), as.numeric) %>%
+    mutate(N_parking_spaces = replace_na(N_parking_spaces, 0)) %>%
+    select(-Description) %>%
+    bind_cols(
+      page_source %>%
+        html_nodes("h2") %>%
+        html_text() %>%
+        tibble(geral = .) %>%
+        separate(geral, into = c("Neighborhood", "City"), sep = ", ", extra = "merge") %>%
+        mutate_at(vars(Neighborhood, City), ~str_trim(as.character(.)))
+    ) %>%
+    bind_cols({
+      div_data <- page_source %>%
+        html_nodes("div") %>%
+        html_text() %>%
+        tibble(geral = .) %>%
+        filter_all(any_vars(!is.na(.) & str_detect(., "\\S"))) %>%
+        filter(str_detect(geral, "^\\s*R\\$")) %>%
+        filter(str_length(geral) > 50) %>%
+        distinct() %>%
+        filter(!str_detect(geral, "Super destaque")) %>%
+        filter(!str_detect(geral, "WhatsAppContatar")) %>% 
+        filter(!str_detect(geral, "Contatar")) %>%
+        mutate(Rent = str_extract(geral, "(?<=R\\$)[^R]+")) %>%
+        mutate(Rent = ifelse(str_detect(Rent, "\\d{2}%"),
+                             str_replace(Rent, "\\d{2}%", ""), Rent)) %>%
+        mutate(Rent = str_replace_all(Rent, "\\.", "")) %>%
+        mutate(geral = str_replace_all(geral, "R\\$[^R]+R\\$", "")) %>%
+        mutate(geral = str_replace_all(geral, "[0-9.\\s]+", "")) %>%
+        mutate(Type = str_extract(geral, "[A-Z][^A-Z]*")) %>%
+        mutate(geral = str_remove(geral, "[A-Z][^A-Z]*")) %>%
+        separate(geral, into = c("Address", "geral"),
+                 sep = ",", extra = "merge") %>%
+        mutate(Type = ifelse(Type == "R$", "Casa", Type)) %>%
+        mutate(Type = ifelse(Type == "R$%", "Casa", Type)) %>%
+        mutate(geral = str_remove(geral, "Curitiba.*")) %>%
+        select(-geral) %>%
+        mutate(Address = str_replace_all(Address, "([A-Z])", " \\1"))
+      if (nrow(div_data) == 19) {
+        additional_row <- tibble(Address = NA, Rent = NA, Type = NA)
+        div_data <- bind_rows(div_data, additional_row)
+      }
+      div_data
+    }) %>%
+    mutate(Address = str_replace_all(Address, paste(Neighborhood, collapse = "|"), "")) %>%
+    mutate(N_bathrooms = ifelse(is.na(N_bathrooms), 1, N_bathrooms)) %>%
+    mutate(Rent = str_extract(Rent, "\\d+")) %>%
+    mutate_at(vars(Rent), as.numeric) %>%
+    filter(!is.na(Area_sqm)) %>%
+    rename(Street = Address) %>%
+    filter(!is.na(Type) | !is.na(Street) | !is.na(Rent)) %>%
+    mutate_at(vars(Street), ~str_trim(as.character(.))) %>%
+    relocate(Type, .before = "Area_sqm") %>%
+    relocate(Street, .after = "N_parking_spaces")
+  return(df)
+}
+
+```
+
+
+## 4.2. Scraping = ImovelWeb
+```{r eval=FALSE}
+
+iterations <- 149 
+
+page_source_cwb <- list()
+for (page_number in 1:iterations) {
+  remDr <- rs_driver_object$client
+  url <- paste0("https://www.imovelweb.com.br/casas-apartamentos-aluguel-curitiba-pr-pagina-", 
+                page_number, ".html")
+  remDr$open()
+  remDr$navigate(url)
+  df <- extract_rental_info_ii()
+  page_source_cwb[[page_number]] <- df
+  remDr$close()
+}
+
+df_cwb_ii <- do.call(rbind, page_source_cwb)
+
+```
+
+---
+
+```{r include=FALSE}
+
+df_cwb_ii <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/CWB_Dataset_II-NW.xlsx")
+
+```
+
+# 5. FURTHER DATA WRANGLING II - IMOVEL WEB
+
+
+## 5.1. Checking for outliers in 'Type' column
+```{r echo=TRUE}
+
+df_na <- df_cwb_ii
+
+unique(df_na$Type)
+
+df_na <- df_na %>%
+  mutate(Type = if_else(str_detect(Type, "(?i)Condominio"), "Condominio", "Casa"))
+
+unique(df_na$Type)
+
+df_na <- df_na %>%
+  mutate(Type = if_else(is.na(Type) | str_detect(Type, "(?i)Condominio"), "Condominio", "Casa"))
+
+unique(df_na$Type)
+
+```
+
+
+## 5.2. Checking for duplicated entries
+```{r echo=TRUE}
+
+duplicates <- df_na[duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                         "N_parking_spaces", "Neighborhood", "City", 
+                                         "Rent")]) 
+                    | duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                           "N_parking_spaces", "Neighborhood", "City", 
+                                           "Rent")], fromLast = TRUE), ]
+
+duplicates %>%
+  arrange(Type) %>%
+  head(10)
+
+```
+
+
+## 5.3. Removing duplicates from the dataset
+```{r echo=TRUE}
+
+df_na <- unique(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", "N_parking_spaces", 
+                          "Neighborhood", "City", "Rent")])
+
+duplicates <- df_na[duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                         "N_parking_spaces", "Neighborhood", "City", "Rent")]) 
+                    | duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                           "N_parking_spaces", "Neighborhood", "City", 
+                                           "Rent")], fromLast = TRUE), ]
+
+duplicates %>%
+  arrange(Type) %>%
+  head(10)
+
+```
+
+
+## 5.4. Checking for outliers in 'Area_sqm' column
+```{r echo=TRUE}
+
+df_na %>%
+  arrange(Area_sqm) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Area_sqm)) %>%
+  head(50)
+
+df_na <- df_na %>%
+  filter(Area_sqm >= 10 & Area_sqm <= 1000)
+
+df_na %>%
+  arrange(Area_sqm) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Area_sqm)) %>%
+  head(50)
+
+```
+
+
+## 5.5. Checking for outliers in 'Neighborhood' column
+```{r echo=TRUE}
+
+df_na %>%
+  arrange(Neighborhood) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Neighborhood)) %>%
+  head(10)
+
+df_na <- df_na %>%
+  mutate(Neighborhood = iconv(Neighborhood, "UTF-8", "ASCII//TRANSLIT"))
+
+df_na %>%
+  arrange(desc(Neighborhood)) %>%
+  head(10)
+
+```
+
+
+## 5.6. Saving the dataframe as an xlsx file
+```{r eval=FALSE}
+
+df_cwb_ii <- df_na
+
+file <- "CWB_Dataset_II.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/", file)
+write.xlsx(df_cwb_ii, folder, rowNames = FALSE)
+
+```
+
+---
+
+# 6. DATA SCRAPING III AND PRELIMINAR WRANGLING - VIVA REAL
+
+
+## 6.1. Data wrangling function III
+```{r echo=TRUE}
+
+extract_rental_info_iii <- function() {
+  page_source <- remDr$getPageSource()[[1]] %>% read_html()
+  df <- page_source %>%
+    html_nodes("h2") %>%
+    html_text() %>%
+    tibble(geral = .) %>%
+    slice_head(n = 36) %>%
+    mutate(geral = str_squish(geral)) %>%
+    mutate(Type = word(geral, 1, 1),
+           geral = str_remove(geral, "^\\S+\\s")) %>%
+    mutate(geral = str_remove(geral, "^[^,]+,\\s*")) %>%
+    mutate(Area_sqm = as.numeric(str_extract(geral, "\\d+")),
+           geral = str_remove(geral, "\\d+")) %>%
+    mutate(geral = str_remove(geral, "m²")) %>%
+    mutate(Street = str_extract(geral, "^[^-]+"),
+           geral = str_remove(geral, "^[^-]+"),
+           geral = str_remove(geral, "- "),
+           geral = str_remove(geral, "- PR ver mapa")) %>%
+    mutate(Neighborhood = str_extract(geral, "^[^,]+"),
+           City = str_remove(geral, "^[^,]+,\\s*")) %>%
+    mutate(Street = str_trim(Street),
+           Neighborhood = str_trim(Neighborhood),
+           City = str_trim(City)) %>%
+    mutate(Neighborhood = if_else(City != "Curitiba", 
+                                  str_extract(Street, "^[^,]+"), Neighborhood),
+           City = if_else(City != "Curitiba", 
+                          str_extract(Street, "[^,]+$"), City),
+           Street = if_else(City != "Curitiba", NA_character_, Street)) %>%
+    mutate(Neighborhood = iconv(Neighborhood, "UTF-8", "ASCII//TRANSLIT")) %>%
+    mutate(Street = str_trim(Street),
+           Neighborhood = str_trim(Neighborhood),
+           City = str_trim(City)) %>%
+    select(-geral) %>%
+    bind_cols(
+      page_source %>%
+        html_nodes("p") %>%
+        html_text() %>%
+        tibble(Rent = .) %>%
+        slice_head(n = 36) %>%
+        mutate(Rent = str_squish(Rent)) %>%
+        mutate(Rent = str_remove_all(Rent, "\\.")) %>%
+        mutate(Rent = as.numeric(str_extract(Rent, "\\d+")))
+    ) %>%
+    bind_cols(
+      page_source %>%
+        html_nodes("li") %>%
+        html_text() %>%
+        tibble(geral = .) %>%
+        filter(!str_detect(geral, "m²")) %>%
+        mutate(geral = str_squish(geral)) %>%
+        filter(str_detect(geral, "Quarto|Quartos|Banheiro|Banheiros|Vaga|Vagas")) %>%
+        group_by(observation_id = ceiling(row_number()/3)) %>%
+        summarise(geral = paste(geral, collapse = " ")) %>%
+        slice(1:36) %>%
+        select(geral) %>%
+        mutate(N_rooms = str_extract(geral, "(\\d+) Quarto(s)?"),
+               geral = str_remove(geral, "(\\d+) Quarto(s)?")) %>%
+        mutate(N_bathrooms = str_extract(geral, "(\\d+) Banheiro(s)?"),
+               N_parking_spaces = str_remove(geral, "(\\d+) Banheiro(s)?")) %>%
+        select(-geral) %>%
+        mutate(N_parking_spaces = str_replace(N_parking_spaces, "--", "0")) %>%
+        mutate_at(vars(N_rooms, N_bathrooms, N_parking_spaces), 
+                  ~as.numeric(gsub("[^0-9.]", "", .)))
+    ) %>%
+    relocate(Street, .after = "N_parking_spaces") %>%
+    relocate(Neighborhood, .after = "Street") %>%
+    relocate(City, .after = "Neighborhood") %>%
+    relocate(Rent, .after = "City")
+  return(df)
+}
+
+```
+
+
+## 6.2. Scraping = VivaReal
+```{r eval=FALSE}
+
+iterations <- 96 #OBS³
+
+page_source_cwb <- list()
+for (page_number in 1:iterations) {
+  remDr <- rs_driver_object$client
+  url <- paste0("https://www.vivareal.com.br/aluguel/parana/curitiba/?pagina=", 
+                page_number, "#onde=Brasil,Paran%C3%A1,Curitiba,,,,,,BR%3EParana%3ENULL%3ECuritiba,,,&tipos=apartamento_residencial,casa_residencial,condominio_residencial,cobertura_residencial,flat_residencial,kitnet_residencial,sobrado_residencial,edificio-residencial_comercial")
+  remDr$open()
+  remDr$navigate(url)
+  Sys.sleep(5)
+  df <- extract_rental_info_iii()
+  page_source_cwb[[page_number]] <- df
+  remDr$close()
+}
+
+df_cwb_iii <- do.call(rbind, page_source_cwb)
+
+```
+
+---
+
+```{r include=FALSE}
+
+df_cwb_iii <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/CWB_Dataset_III-NW.xlsx")
+
+```
+
+# 7. FURTHER DATA WRANGLING III - VIVA REAL
+
+
+## 7.1. Checking for NAs
+```{r echo=TRUE}
+
+results <- vector("list", length = ncol(df_cwb_iii))
+
+for (i in seq_along(names(df_cwb_iii))) {
+  results[[i]] <- df_cwb_iii %>%
+    summarise(NAs = sum(is.na(!!sym(names(df_cwb_iii)[i]))))
+}
+
+results_df <- bind_rows(results, .id = "Column")
+
+print(results_df)
+
+```
+
+
+## 7.2. Removing NAs from the text columns
+```{r echo=TRUE}
+
+df_na <- df_cwb_iii
+
+df_na <- df_na %>%
+  filter(!is.na(Area_sqm)) %>%
+  filter(!is.na(N_rooms))
+
+results <- vector("list", length = ncol(df_na))
+
+for (i in seq_along(names(df_cwb_iii))) {
+  results[[i]] <- df_na %>%
+    summarise(NAs = sum(is.na(!!sym(names(df_na)[i]))))
+}
+
+results_df <- bind_rows(results, .id = "Column")
+
+print(results_df)
+
+```
+
+
+## 7.3. Checking for duplicated entries
+```{r echo=TRUE}
+
+duplicates <- df_na[duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_parking_spaces", 
+                                         "Street", "Neighborhood", "City", "Rent")]) 
+                    | duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_parking_spaces", 
+                                           "Street", "Neighborhood", "City", "Rent")], 
+                                 fromLast = TRUE), ]
+
+duplicates %>%
+  arrange(Street) %>%
+  head(10)
+
+```
+
+
+## 7.4. Removing duplicates from the dataset
+```{r echo=TRUE}
+
+df_na <- unique(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", "N_parking_spaces", 
+                          "Street", "Neighborhood", "City", "Rent")])
+
+duplicates <- df_na[duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                         "N_parking_spaces", "Street", "Neighborhood", 
+                                         "City", "Rent")]) 
+                    | duplicated(df_na[, c("Type", "Area_sqm", "N_rooms", "N_bathrooms", 
+                                           "N_parking_spaces", "Street", "Neighborhood", 
+                                           "City", "Rent")], fromLast = TRUE), ]
+
+duplicates %>%
+  arrange(Type) %>%
+  head(10)
+
+```
+
+
+
+## 7.5. Checking for outliers in 'Area_sqm' column
+```{r echo=TRUE}
+
+df_na %>%
+  arrange(Area_sqm) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Area_sqm)) %>%
+  head(50)
+
+df_na <- df_na %>%
+  filter(Area_sqm >= 10 & Area_sqm <= 1000)
+
+df_na %>%
+  arrange(Area_sqm) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Area_sqm)) %>%
+  head(50)
+
+```
+
+
+## 7.6. Checking for outliers in 'Neighborhood' column
+```{r echo=TRUE}
+
+df_na %>%
+  arrange(Neighborhood) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Neighborhood)) %>%
+  head(10)
+
+df_na <- df_na %>%
+  mutate(Neighborhood = str_remove_all(Neighborhood, "-|\\d")) %>%
+  mutate(Neighborhood = str_trim(Neighborhood)) %>%
+  select(-Street)
+  
+
+df_na %>%
+  arrange(Neighborhood) %>%
+  head(10)
+
+df_na %>%
+  arrange(desc(Neighborhood)) %>%
+  head(10)
+
+```
+
+
+## 7.7. Standardizing the Type column
+```{r echo=TRUE}
+
+unique(df_na$Type)
+
+df_na <- df_na %>%
+  filter(Type != "Edifício") %>%
+  mutate(Type = case_when(
+    Type %in% c("Apartamento", "Cobertura", "Flat", "Kitnet/Conjugado") ~ "Condominio",
+      TRUE ~ Type
+  ))
+  
+```
+
+
+## 7.8. Saving the dataframe as an xlsx file
+```{r eval=FALSE}
+
+df_cwb_iii <- df_na
+
+file <- "CWB_Dataset_III.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/", file)
+write.xlsx(df_cwb_iii, folder, rowNames = FALSE)
+
+```
+
+---
+
+# 8. MERGING THE THREE DATASETS
+
+
+```{r include=FALSE}
+
+df_cwb <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/CWB_Dataset_I.xlsx")
+  
+df_cwb_ii <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/CWB_Dataset_II.xlsx")
+
+df_cwb_iii <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/CWB_Dataset_III.xlsx")
+
+```
+
+
+## 8.1. Concatenating the dataframes df_cwb, df_cwb_ii, and df_cwb_iii
+```{r echo=TRUE}
+
+df <- rbind(df_cwb, df_cwb_ii, df_cwb_iii)
+
+```
+
+
+## 8.2. Standardizing the Neighborhood column
+```{r echo=TRUE}
+
+extraoficial_n <- as.tibble(unique(df$Neighborhood)) %>%
+  rename(Neighborhood = value) %>%
+  arrange(Neighborhood)
+
+oficial_n <- read.csv("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Curitiba/Neighborhoods.csv")
+
+result <- as.tibble(c(oficial_n$Neighborhood,
+            extraoficial_n$Neighborhood)) %>%
+  rename(Neighborhood = value) %>%
+  arrange(Neighborhood)
+
+result <- result %>%
+  group_by(Neighborhood) %>%
+  mutate(
+    Oficial = ifelse(n() > 1, Neighborhood, NA),
+    Extraoficial = ifelse(n() == 1, Neighborhood, Neighborhood)
+  ) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(-Neighborhood) %>%
+  arrange(Oficial)
+
+df <- df %>%
+  filter(!Neighborhood %in% c("Alphaville", "Avenida dos Canarios", "Curitiba",
+                              "Colonia Rio Grande", "Rodovia BR", "Rua Jaguariaiva",
+                              "Rua Tenente", "Sao Miguel")) %>%
+  mutate(Neighborhood = case_when(
+    Neighborhood == "Barigui" ~ "Santo Inacio",
+    Neighborhood %in% c("Alto da Rua Xv", "Alto da XV", "Alto da XV", "Alto") ~ "Alto da Rua XV",
+    Neighborhood == "Caiua" ~ "Capao Raso",
+    Neighborhood == "Caximba" ~ "Caximba",
+    Neighborhood == "Champagnat" ~ "Bigorrilho",
+    Neighborhood %in% c("Cidade Industrial", "Cidade Industrial de Curitiba", "Itatiaia",
+                        "Neoville") ~ "CIC",
+    Neighborhood == "Coronel Servando de Loyola e Silva Barreirinha" ~ "Barreirinha",
+    Neighborhood == "Ecoville" ~ "Mossungue",
+    Neighborhood == "Jardim Schaffer" ~ "Vista Alegre",
+    Neighborhood == "Lamenha Pequena" ~ "Santa Felicidade",
+    Neighborhood == "Riviera" ~ "Riviera",
+    Neighborhood == "Rua Major Inacio Gomes da Costa" ~ "Uberaba",
+    Neighborhood == "Vila Lindoia" ~ "Lindoia",
+    TRUE ~ Neighborhood
+  ))
+
+Neighborhoods <- as.tibble(unique(df$Neighborhood)) %>%
+  rename(neighborhoods = value) %>%
+  arrange(neighborhoods)
+
+head(Neighborhoods, 10)
+count(Neighborhoods)
+
+```
+
+
+## 8.3. Saving the dataframe as an xlsx file
+```{r eval=FALSE}
+
+file <- "CWB_Dataset.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/", file)
+write.xlsx(df, folder, rowNames = FALSE)
+
+```
+
+
+---
+
+# 9. EXPLORATORY ANALYSIS
+
+
+## 9.1. Preliminary analysis
+```{r echo=TRUE}
+
+summary(df)
+
+str(df)
+
+head(df, 10)
+
+tail(df)
+
+```
+
+

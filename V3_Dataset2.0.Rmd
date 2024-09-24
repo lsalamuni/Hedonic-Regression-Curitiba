@@ -1,0 +1,940 @@
+---
+title: "Mapas - Curitiba"
+author: "Lucas Salamuni"
+date: "2024-04-17"
+output: html_document
+---
+
+# 1. Packages
+
+## 1.1. Retrieving Packages
+```{r message=FALSE, warning=FALSE, echo = TRUE}
+
+pacotes <- c("tidyverse", "factoextra", "readxl", "ggplot2", "patchwork", 
+             "corrplot", "plotly", "data.table", "EFAtools", "psych",
+             "leaflet", "sf", "sp", "mapview", "webshot", "htmltools", 
+             "leafem", "viridisLite", "writexl", "rvest", "readr", 
+             "stringr", "curl", "magrittr", "RSelenium", "netstat", "wdman") 
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){ 
+  instalador <- pacotes[!pacotes %in% installed.packages()] 
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T)
+} else {
+  sapply(pacotes, require, character = T)
+}
+
+```
+
+---
+
+# 2. PCA
+
+## 2.1. Performing the stratification of localities according to Fávero (2005)
+```{r echo = TRUE}
+
+df_cwb <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Curitiba/Curitiba_Public_Data.xlsx")
+
+var <- df_cwb %>%
+  select(`Pop_SM_%`,
+         Renda,
+         `Alfab_%`,
+         Densidade,
+         Cresc_pop) %>%
+  as.matrix()
+
+EFAtools::KMO(var)
+
+EFAtools::BARTLETT(var)
+
+pca <- var %>%
+  prcomp(center = TRUE,
+         scale. = TRUE)
+
+loadings <- pca$rotation
+scores <- as.data.frame(pca$x)
+variance <- (pca$sdev)^2
+
+scores$Localidade <- df_cwb$Localidade
+scores <- scores %>%
+  relocate(Localidade, .before = 1)
+
+resumo_pca <- summary(pca)
+
+variancia <- data.frame(PC1 = resumo_pca$importance[2,1],
+                        PC2 = resumo_pca$importance[2,2]) %>%
+  t() %>%
+  as.data.frame() %>%
+  rename("Variância Compartilhada" = V1)
+
+scores <- scores %>%
+  select(Localidade, PC1, PC2)
+
+loadings <- loadings %>%
+  as.data.frame() %>%
+  select(PC1, PC2)
+
+estratificacao <- data.frame("Localidade" = df_cwb$Localidade,
+                    "Score_Final" = ((scores[,2] * variancia[1,] * (-1)) + 
+                                       (scores[,3] * variancia[2,] * (-1)))) %>%
+  mutate(Estratificação = case_when(
+    Score_Final < -0.01 ~ "Baixo",
+    Score_Final > 1.00 ~ "Alto",
+    TRUE ~ "Médio"
+  ))
+
+estratificacao
+
+file <- "CWB_Estrat.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Curitiba/", file)
+write_xlsx(estratificacao, folder)
+
+```
+
+---
+
+# 3. Shapefiles
+
+## 3.1. Loading shapefiles for use in the overall map
+```{r echo = TRUE}
+
+#Bairros
+sf_localidades <- st_read("C:/Users/Lucas/OneDrive/Projeto - FS/Shapefiles - CWB/Localidades/DIVISA_DE_BAIRROS.shp")
+st_crs(sf_localidades)
+sf_localidades <- st_transform(sf_localidades, "+proj=longlat +datum=WGS84")
+
+#Parques e bosques
+sf_parques <- st_read("C:/Users/Lucas/OneDrive/Projeto - FS/Shapefiles - CWB/Parques/PARQUES_E_BOSQUES.shp")
+st_crs(sf_parques)
+sf_parques <- st_transform(sf_parques, "+proj=longlat +datum=WGS84")
+
+#Praças e jardinetes
+sf_pracas <- st_read("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Shapefiles/Squares/PRACAS_E_JARDINETES.shp")
+st_crs(sf_pracas)
+sf_pracas <- st_transform(sf_pracas, "+proj=longlat +datum=WGS84")
+
+#Área verde
+sf_verde <- st_read("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Shapefiles/Green_Area/AREA_VERDE_2019.shp")
+st_crs(sf_verde)
+sf_verde <- st_transform(sf_verde, "+proj=longlat +datum=WGS84")
+
+#Ciclovias
+sf_ciclovias <- st_read("C:/Users/Lucas/OneDrive/Projeto - FS/Shapefiles - CWB/Ciclovias/CICLOVIA_OFICIAL.shp")
+st_crs(sf_ciclovias)
+sf_ciclovias <- st_transform(sf_ciclovias, "+proj=longlat +datum=WGS84")
+
+#Terminais
+sf_terminais <- st_read("C:/Users/Lucas/OneDrive/Projeto - FS/Shapefiles - CWB/Terminais/TERMINAL_DE_TRANSPORTE.shp")
+st_crs(sf_terminais)
+sf_terminais <- st_transform(sf_terminais, "+proj=longlat +datum=WGS84")
+
+#Hospitais
+sf_hospitais <- st_read("C:/Users/Lucas/OneDrive/Projeto - FS/Shapefiles - CWB/Hospitais/HOSPITAL.shp")
+st_crs(sf_hospitais)
+sf_hospitais <- st_transform(sf_hospitais, "+proj=longlat +datum=WGS84")
+
+#Ocupações irregulares
+sf_irregular <- st_read("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Shapefiles/Irregular Settlements/OCUPACAO_IRREGULAR.shp")
+st_crs(sf_irregular)
+sf_irregular <- st_transform(sf_irregular, "+proj=longlat +datum=WGS84")
+
+#Lagos
+sf_lagos <- st_read("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Shapefiles/Lakes/HIDRO_LAGOS_LAGOAS_REPRESAS.shp")
+st_crs(sf_lagos)
+sf_lagos <- st_transform(sf_lagos, "+proj=longlat +datum=WGS84")
+
+#Rios
+sf_rios <- st_read("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Shapefiles/Rivers/HIDRO_RIOS_PG.shp")
+st_crs(sf_rios)
+sf_rios <- st_transform(sf_rios, "+proj=longlat +datum=WGS84")
+
+#Escolas públicas
+sf_esc_pub <- st_read("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Shapefiles/Public Schools/ESCOLA_MUNICIPAL.shp")
+st_crs(sf_esc_pub)
+sf_esc_pub <- st_transform(sf_esc_pub, "+proj=longlat +datum=WGS84")
+
+```
+
+---
+
+# 4. Mapa
+
+## 4.1. Data wrangling
+```{r echo = TRUE}
+
+estratificacao$Localidade <- toupper(estratificacao$Localidade)
+
+estratificacao <- estratificacao %>%
+  mutate(NOME = case_when(
+    Localidade == "AGUA VERDE" ~ "ÁGUA VERDE",
+    Localidade == "AHU" ~ "AHÚ",
+    Localidade == "ALTO BOQUEIRAO" ~ "ALTO BOQUEIRÃO",
+    Localidade == "ALTO DA GLORIA" ~ "ALTO DA GLÓRIA",
+    Localidade == "BOQUEIRAO" ~ "BOQUEIRÃO",
+    Localidade == "CAPAO DA IMBUIA" ~ "CAPÃO DA IMBUIA",
+    Localidade == "CAPAO RASO" ~ "CAPÃO RASO", 
+    Localidade == "CENTRO CIVICO" ~ "CENTRO CÍVICO",
+    Localidade == "CIC" ~ "CIDADE INDUSTRIAL DE CURITIBA",
+    Localidade == "GUAIRA" ~ "GUAÍRA",
+    Localidade == "JARDIM BOTANICO" ~ "JARDIM BOTÂNICO",
+    Localidade == "JARDIM DAS AMERICAS" ~ "JARDIM DAS AMÉRICAS",
+    Localidade == "JUVEVE" ~ "JUVEVÊ",
+    Localidade == "LINDOIA" ~ "LINDÓIA",
+    Localidade == "MERCES" ~ "MERCÊS",
+    Localidade == "MOSSUNGUE" ~ "MOSSUNGUÊ",
+    Localidade == "PORTAO" ~ "PORTÃO",
+    Localidade == "REBOUCAS" ~ "REBOUÇAS",
+    Localidade == "SANTA CANDIDA" ~ "SANTA CÂNDIDA",
+    Localidade == "SANTA QUITERIA" ~ "SANTA QUITÉRIA",
+    Localidade == "SANTO INACIO" ~ "SANTO INÁCIO",
+    Localidade == "SAO BRAZ" ~ "SÃO BRAZ",
+    Localidade == "SAO FRANCISCO" ~ "SÃO FRANCISCO",
+    Localidade == "SAO JOAO" ~ "SÃO JOÃO",
+    Localidade == "SAO LOURENCO" ~ "SÃO LOURENÇO",
+    Localidade == "SAO MIGUEL" ~ "SÃO MIGUEL",
+    Localidade == "SEMINARIO" ~ "SEMINÁRIO",
+    Localidade == "SITIO CERCADO" ~ "SÍTIO CERCADO",
+    Localidade == "TABOAO" ~ "TABOÃO",
+    Localidade == "TARUMA" ~ "TARUMÃ",
+    Localidade == "UMBARA" ~ "UMBARÁ",
+    TRUE ~ Localidade
+  )) %>%
+  relocate(NOME, .after = "Localidade")
+
+sf_localidades <- merge(sf_localidades, estratificacao,
+                        by = "NOME") %>%
+  select(-Localidade, NOME) %>%
+  relocate(Score_Final, .after = "NOME") %>%
+  relocate(Estratificação, .after = "Score_Final")
+
+df_cwb$Localidade <- toupper(df_cwb$Localidade)
+
+df_cwb <- df_cwb %>%
+  mutate(NOME = case_when(
+    Localidade == "AGUA VERDE" ~ "ÁGUA VERDE",
+    Localidade == "AHU" ~ "AHÚ",
+    Localidade == "ALTO BOQUEIRAO" ~ "ALTO BOQUEIRÃO",
+    Localidade == "ALTO DA GLORIA" ~ "ALTO DA GLÓRIA",
+    Localidade == "BOQUEIRAO" ~ "BOQUEIRÃO",
+    Localidade == "CAPAO DA IMBUIA" ~ "CAPÃO DA IMBUIA",
+    Localidade == "CAPAO RASO" ~ "CAPÃO RASO", 
+    Localidade == "CENTRO CIVICO" ~ "CENTRO CÍVICO",
+    Localidade == "CIC" ~ "CIDADE INDUSTRIAL DE CURITIBA",
+    Localidade == "GUAIRA" ~ "GUAÍRA",
+    Localidade == "JARDIM BOTANICO" ~ "JARDIM BOTÂNICO",
+    Localidade == "JARDIM DAS AMERICAS" ~ "JARDIM DAS AMÉRICAS",
+    Localidade == "JUVEVE" ~ "JUVEVÊ",
+    Localidade == "LINDOIA" ~ "LINDÓIA",
+    Localidade == "MERCES" ~ "MERCÊS",
+    Localidade == "MOSSUNGUE" ~ "MOSSUNGUÊ",
+    Localidade == "PORTAO" ~ "PORTÃO",
+    Localidade == "REBOUCAS" ~ "REBOUÇAS",
+    Localidade == "SANTA CANDIDA" ~ "SANTA CÂNDIDA",
+    Localidade == "SANTA QUITERIA" ~ "SANTA QUITÉRIA",
+    Localidade == "SANTO INACIO" ~ "SANTO INÁCIO",
+    Localidade == "SAO BRAZ" ~ "SÃO BRAZ",
+    Localidade == "SAO FRANCISCO" ~ "SÃO FRANCISCO",
+    Localidade == "SAO JOAO" ~ "SÃO JOÃO",
+    Localidade == "SAO LOURENCO" ~ "SÃO LOURENÇO",
+    Localidade == "SAO MIGUEL" ~ "SÃO MIGUEL",
+    Localidade == "SEMINARIO" ~ "SEMINÁRIO",
+    Localidade == "SITIO CERCADO" ~ "SÍTIO CERCADO",
+    Localidade == "TABOAO" ~ "TABOÃO",
+    Localidade == "TARUMA" ~ "TARUMÃ",
+    Localidade == "UMBARA" ~ "UMBARÁ",
+    TRUE ~ Localidade
+  )) %>%
+  relocate(NOME, .after = "Localidade") %>%
+  select(-Localidade)
+
+sf_localidades <- merge(sf_localidades, df_cwb,
+                        by = "NOME")
+
+sf_localidades$Estratificação <- factor(sf_localidades$Estratificação,
+                                        levels = c("Baixo", "Médio", "Alto"))
+
+
+sf_terminais <- sf_terminais %>%
+  mutate(NOME_COMPL = iconv(NOME_COMPL, from = "latin1", to = "UTF-8")) %>%
+  mutate(NOME = iconv(NOME, from = "latin1", to = "UTF-8")) %>%
+  mutate(BAIRRO = iconv(BAIRRO, from = "latin1", to = "UTF-8"))
+      
+```
+
+
+## 4.2. Palettes
+```{r echo = TRUE}
+
+palette <- colorFactor(palette = c("blue", "gold", "red"),
+                       domain = sf_localidades$Estratificação)
+
+viridis <- viridis(20)
+
+palette_i <- colorNumeric(palette = "YlOrBr",
+                          domain = sf_localidades$Populacao,
+                          na.color = "transparent")
+
+palette_ii <- colorNumeric(palette = "Blues",
+                           domain = sf_localidades$`Densidade_ab/ha`,
+                           na.color = "transparent")
+
+```
+
+
+## 4.3. Texts
+```{r echo = TRUE}
+
+text_bairros <- paste(
+  "Bairro: ", sf_localidades$NOME, "<br/>",
+  "População: ", sf_localidades$Populacao,
+  sep = "") %>%
+  lapply(htmltools::HTML)
+
+text_parks <- paste(
+  "Nome: ", sf_parques$TEXTO_MAPA, "<br/>",
+  "Tipo: ", sf_parques$TIPO,
+  sep = "") %>%
+  lapply(htmltools::HTML)
+
+text_lakes <- paste(
+  "Nome: ", sf_lagos$NOME, "<br/>",
+  "Tipo: ", sf_lagos$TIPO,
+  sep = "") %>%
+  lapply(htmltools::HTML)
+
+text_rivers <- paste(
+  "Nome: ", sf_rios$NOME, "<br/>",
+  "Tipo: ", sf_rios$TIPO,
+  sep = "") %>%
+  lapply(htmltools::HTML)
+
+text_density <- paste(
+  "Nome: ", sf_localidades$NOME, "<br/>",
+  "População: ", sf_localidades$`Densidade_ab/ha`,
+  sep = "") %>%
+  lapply(htmltools::HTML)
+
+text_estratification <- paste(
+  "Bairro: ", sf_localidades$NOME, "<br/>",
+  "Estratificação: ", sf_localidades$Estratificação,
+  sep = "") %>%
+  lapply(htmltools::HTML)
+
+```
+
+
+## 4.4. Icons
+```{r echo = TRUE}
+
+icone_hospitais <- awesomeIcons(
+  icon = "plus",
+  iconColor = "white",
+  library = "glyphicon",
+  markerColor = "red"
+)
+
+icone_terminais <- awesomeIcons(
+  icon = "bus",
+  iconColor = "white",
+  library = "fa",
+  markerColor = "blue"
+)
+
+icone_escolas_publicas <- awesomeIcons(
+  icon = "book",
+  iconColor = "white",
+  library = "glyphicon",
+  markerColor = "orange"
+)
+
+```
+
+
+## 4.5. Map providers
+```{r echo = TRUE}
+
+providers <- c("OpenStreetMap", "Esri.WorldImagery")
+
+```
+
+
+## 4.6. UTM -> lat/long
+```{r echo = TRUE}
+
+utm_proj <- "+proj=utm +zone=22 +datum=WGS84"
+
+sf_hospitais <- st_transform(sf_hospitais, "+proj=longlat +datum=WGS84")
+
+sf_hospitais$Longitude <- st_coordinates(sf_hospitais)[, "X"]
+sf_hospitais$Latitude <- st_coordinates(sf_hospitais)[, "Y"]
+
+sf_terminais <- st_transform(sf_terminais, "+proj=longlat +datum=WGS84")
+
+sf_terminais$Longitude <- st_coordinates(sf_terminais)[, "X"]
+sf_terminais$Latitude <- st_coordinates(sf_terminais)[, "Y"]
+
+sf_esc_pub <- st_transform(sf_esc_pub, "+proj=longlat +datum=WGS84")
+
+sf_esc_pub$Longitude <- st_coordinates(sf_esc_pub)[, "X"]
+sf_esc_pub$Latitude <- st_coordinates(sf_esc_pub)[, "Y"]
+
+```
+
+
+## 4.7. Map
+```{r echo = TRUE}
+
+mapa <- leaflet()
+for(i in 1:length(providers)){
+  mapa <- mapa %>%
+    addProviderTiles(providers[i],
+                     group = providers[i])
+}
+
+mapa <- mapa %>%
+  addProviderTiles("OpenStreetMap") %>%
+  addPolygons(data = sf_localidades,
+              group = "Limite de Bairros",
+              fillColor = "transparent",
+              smoothFactor = 0.5,
+              opacity = 1,
+              stroke = TRUE,
+              weight = 1,
+              color = "black",
+              highlight = highlightOptions(color = "white",
+                                           weight = 2,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = text_bairros,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addPolygons(data = sf_parques,
+              group = "Área Verde",
+              stroke = FALSE,
+              fillColor = "green",
+              color = "transparent",
+              fillOpacity = 0.7,
+              highlight = highlightOptions(color = "darkgreen",
+                                           weight = 3,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = text_parks,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addPolygons(data = sf_pracas,
+              group = "Área Verde",
+              stroke = FALSE,
+              fillColor = "green",
+              color = "transparent",
+              fillOpacity = 0.7,
+              highlight = highlightOptions(color = "darkgreen",
+                                           weight = 3,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = sf_pracas$NOME,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addPolygons(data = sf_lagos,
+              group = "Hidrografia",
+              stroke = FALSE,
+              fillColor = "blue",
+              color = "transparent",
+              fillOpacity = 0.7,
+              highlight = highlightOptions(color = "darkblue",
+                                           weight = 3,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = text_lakes,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addPolygons(data = sf_rios,
+              group = "Hidrografia",
+              stroke = FALSE,
+              fillColor = "blue",
+              color = "transparent",
+              fillOpacity = 0.7,
+              highlight = highlightOptions(color = "darkblue",
+                                           weight = 3,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = text_rivers,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addPolygons(data = sf_irregular,
+              group = "Ocupação Irregular",
+              stroke = FALSE,
+              fillColor = "red",
+              color = "transparent",
+              fillOpacity = 0.7,
+              highlight = highlightOptions(color = "white",
+                                           weight = 3,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = sf_irregular$NOME,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addAwesomeMarkers(group = "Hospitais",
+                    data = sf_hospitais,
+                    lng = ~Longitude,
+                    lat = ~Latitude,
+                    popup = ~NOME_COMPL,
+                    icon = icone_hospitais
+                    ) %>%
+  addAwesomeMarkers(group = "Terminais de Ônibus",
+                    data = sf_terminais,
+                    lng = ~Longitude,
+                    lat = ~Latitude,
+                    popup = ~NOME_COMPL,
+                    icon = icone_terminais
+                    ) %>%
+  addAwesomeMarkers(group = "Escolas Municipais",
+                    data = sf_esc_pub,
+                    lng = ~Longitude,
+                    lat = ~Latitude,
+                    popup = ~NOME_MAPA,
+                    icon = icone_escolas_publicas
+                    ) %>%
+  addPolygons(data = sf_localidades,
+              group = "População",
+              fillColor = ~palette_i(sf_localidades$Populacao),
+              smoothFactor = 0.5,
+              opacity = 1,
+              stroke = TRUE,
+              weight = 1,
+              fillOpacity = 0.5,
+              color = "black",
+              highlight = highlightOptions(color = "white",
+                                           weight = 2,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = text_bairros,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addPolygons(data = sf_localidades,
+              group = "Densidade",
+              fillColor = ~palette_ii(sf_localidades$`Densidade_ab/ha`),
+              smoothFactor = 0.5,
+              opacity = 1,
+              stroke = TRUE,
+              weight = 1,
+              fillOpacity = 0.5,
+              color = "black",
+              highlight = highlightOptions(color = "white",
+                                           weight = 2,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = text_density,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addPolygons(data = sf_localidades,
+              group = "Estratificação de Bairros",
+              fillColor = ~palette(sf_localidades$Estratificação),
+              smoothFactor = 0.5,
+              opacity = 1,
+              stroke = TRUE,
+              weight = 1,
+              fillOpacity = 0.5,
+              color = "black",
+              highlight = highlightOptions(color = "white",
+                                           weight = 2,
+                                           bringToFront = TRUE,
+                                           stroke = TRUE),
+              label = text_estratification,
+              labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "13px",
+                direction = "auto"
+              )) %>%
+  addLegend(group = "Estratificação de Bairros",
+            data = sf_localidades,
+            pal = palette,
+            values = ~Estratificação,
+            opacity = 1,
+            title = "Estratificação",
+            position = "bottomright") %>%
+  addLegend(group = "População",
+            data = sf_localidades,
+            pal = palette_i,
+            values = ~Populacao,
+            opacity = 1,
+            title = "População",
+            position = "bottomright") %>%
+  addLegend(group = "Densidade",
+            data = sf_localidades,
+            pal = palette_ii,
+            values = ~`Densidade_ab/ha`,
+            opacity = 1,
+            title = "Densidade",
+            position = "bottomright") %>%
+  addLayersControl(
+    baseGroups = providers,
+    overlayGroups = c("Limite de Bairros",
+                      "Área Verde",
+                      "Hidrografia",
+                      "Ocupação Irregular",
+                      "Hospitais",
+                      "Terminais de Ônibus",
+                      "Escolas Municipais",
+                      "População",
+                      "Densidade",
+                      "Estratificação de Bairros"),
+    position = "topleft",
+    options = layersControlOptions(collapsed = TRUE)) %>%
+  addMeasure(primaryLengthUnit = "meters",
+             primaryAreaUnit = "sqmeters",
+             position = "bottomleft")
+  
+mapa
+
+```
+
+---
+
+# 5. Creating the new datasets
+
+```{r include = FALSE}
+
+escolas_particulares <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Curitiba/Private_schools.xlsx")
+
+```
+
+
+# 5.1. Web scraping of private school data
+```{r eval = FALSE}
+
+selenium()
+selenium_object <- selenium(retcommand = TRUE,
+                            check = FALSE)
+rs_driver_object <- rsDriver(browser = "chrome",
+                             chromever = "125.0.6422.60",
+                             verbose = FALSE,
+                             port = free_port())
+
+extract_school_info <- function() {
+  page_source <- remDr$getPageSource()[[1]] 
+  df <- read_html(page_source) %>%
+    html_nodes("h2") %>%
+    html_text() %>%
+    tibble(NOME = .) %>%
+    bind_cols(
+      read_html(page_source) %>%
+        html_nodes("p") %>%
+        html_text() %>%
+        tibble(BAIRRO = .) %>%
+        slice(2:31) %>%
+        mutate(BAIRRO = str_extract(BAIRRO, "[^,]+")) %>%
+        mutate(BAIRRO = toupper(BAIRRO)) %>%
+        mutate(BAIRRO = str_trim(BAIRRO)) %>%
+        mutate(BAIRRO = case_when(
+          BAIRRO == "AGUA VERDE" ~ "ÁGUA VERDE",
+          BAIRRO == "AHU" ~ "AHÚ",
+          BAIRRO == "ALTO BOQUEIRAO" ~ "ALTO BOQUEIRÃO",
+          BAIRRO == "ALTO DA GLORIA" ~ "ALTO DA GLÓRIA",
+          BAIRRO == "BOQUEIRAO" ~ "BOQUEIRÃO",
+          BAIRRO == "CAPAO DA IMBUIA" ~ "CAPÃO DA IMBUIA",
+          BAIRRO == "CAPAO RASO" ~ "CAPÃO RASO", 
+          BAIRRO == "CENTRO CIVICO" ~ "CENTRO CÍVICO",
+          BAIRRO == "CIC" ~ "CIDADE INDUSTRIAL DE CURITIBA",
+          BAIRRO == "GUAIRA" ~ "GUAÍRA",
+          BAIRRO == "JARDIM BOTANICO" ~ "JARDIM BOTÂNICO",
+          BAIRRO == "JARDIM DAS AMERICAS" ~ "JARDIM DAS AMÉRICAS",
+          BAIRRO == "JUVEVE" ~ "JUVEVÊ",
+          BAIRRO == "LINDOIA" ~ "LINDÓIA",
+          BAIRRO == "MERCES" ~ "MERCÊS",
+          BAIRRO == "MOSSUNGUE" ~ "MOSSUNGUÊ",
+          BAIRRO == "PORTAO" ~ "PORTÃO",
+          BAIRRO == "REBOUCAS" ~ "REBOUÇAS",
+          BAIRRO == "SANTA CANDIDA" ~ "SANTA CÂNDIDA",
+          BAIRRO == "SANTA QUITERIA" ~ "SANTA QUITÉRIA",
+          BAIRRO == "SANTO INACIO" ~ "SANTO INÁCIO",
+          BAIRRO == "SAO BRAZ" ~ "SÃO BRAZ",
+          BAIRRO == "SAO FRANCISCO" ~ "SÃO FRANCISCO",
+          BAIRRO == "SAO JOAO" ~ "SÃO JOÃO",
+          BAIRRO == "SAO LOURENCO" ~ "SÃO LOURENÇO",
+          BAIRRO == "SAO MIGUEL" ~ "SÃO MIGUEL",
+          BAIRRO == "SEMINARIO" ~ "SEMINÁRIO",
+          BAIRRO == "SITIO CERCADO" ~ "SÍTIO CERCADO",
+          BAIRRO == "TABOAO" ~ "TABOÃO",
+          BAIRRO == "TARUMA" ~ "TARUMÃ",
+          BAIRRO == "UMBARA" ~ "UMBARÁ",
+          TRUE ~ BAIRRO
+          ))
+    )
+  return(df)
+}
+
+iterations <- 16 
+school_source_cwb <- list()
+for (page_number in 1:iterations) {
+  remDr <- rs_driver_object$client
+  if (page_number == 1) {
+    url <- "https://escolas.com.br/particulares/pr/curitiba"
+  } else {
+    url <- paste0("https://escolas.com.br/particulares/pr/curitiba?pagina=", page_number)
+  }
+  remDr$open()
+  remDr$navigate(url)
+  df <- extract_school_info()
+  school_source_cwb[[page_number]] <- df
+  remDr$close()
+}
+
+escolas_particulares <- do.call(rbind, school_source_cwb)
+
+```
+
+
+## 5.2. Accessing datasets of homicides and shopping malls by neighborhood
+```{r eval = FALSE}
+
+homicidios <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Curitiba/Homicides.xlsx")
+
+shoppings <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Curitiba/Shopping_centers.xlsx")
+
+```
+
+
+## 5.3. *info_bairros*
+```{r eval = FALSE}
+
+info_bairros <- df_cwb %>%
+  select(NOME, Populacao, `Densidade_ab/ha`) %>%
+  rename(BAIRRO = NOME,
+         POPULACAO = Populacao,
+         DENSIDADE = `Densidade_ab/ha`)
+
+hospitais <- sf_hospitais %>%
+  select(BAIRRO) %>%
+  st_drop_geometry() %>%
+  mutate(BAIRRO = toupper(BAIRRO)) %>%
+  count(BAIRRO) %>%
+  rename(N_HOSPITAIS = n) %>%
+  arrange(BAIRRO) %>%
+  as_tibble()
+
+irregular <- sf_irregular %>%
+  select(BAIRRO, SHAPE_AREA) %>%
+  st_drop_geometry() %>%
+  group_by(BAIRRO) %>%
+  summarise(AREA_IRREGULAR = sum(SHAPE_AREA)) %>%
+  arrange(BAIRRO) %>%
+  as_tibble()
+
+terminais <- sf_terminais %>%
+  select(BAIRRO) %>%
+  mutate(BAIRRO = toupper(BAIRRO)) %>%
+  st_drop_geometry() %>%
+  count(BAIRRO) %>%
+  rename(N_TERMINAIS = n)
+
+escolas_publicas <- sf_esc_pub %>%
+  select(BAIRRO) %>%
+  mutate(BAIRRO = toupper(BAIRRO)) %>%
+  st_drop_geometry() %>%
+  count(BAIRRO) %>%
+  rename(N_PUBLIC_SCHOOLS = n)
+
+escolas_particulares <- escolas_particulares %>%
+  group_by(BAIRRO) %>%
+  summarise(N_PRIVATE_SCHOOLS = n()) %>%
+  arrange(BAIRRO) %>%
+  as_tibble()
+
+area_verde <- sf_verde %>% 
+  select(nm_bairro, Shape_Area) %>%
+  mutate(BAIRRO = toupper(nm_bairro)) %>%
+  st_drop_geometry() %>%
+  group_by(BAIRRO) %>%
+  summarise(AREA_VERDE = sum(Shape_Area)) %>%
+  arrange(BAIRRO) %>%
+  as_tibble()
+
+localidades <- sf_localidades %>%
+  select(NOME, SHAPE_AREA) %>%
+  rename(BAIRRO = NOME,
+         AREA = SHAPE_AREA) %>%
+  st_drop_geometry() %>%
+  as_tibble()
+
+shoppings <- shoppings %>%
+  group_by(BAIRRO) %>%
+  summarise(N_SHOPPINGS = n()) %>%
+  arrange(BAIRRO) %>%
+  as_tibble()
+
+homicidios <- homicidios %>%
+  select(BAIRRO) %>%
+  group_by(BAIRRO) %>%
+  summarise(N_HOMICIDIOS = n()) %>%
+  arrange(BAIRRO) %>%
+  as_tibble()
+
+lista_dfs <- list(hospitais, irregular, area_verde, terminais, escolas_publicas, 
+                  escolas_particulares, shoppings, homicidios, localidades) 
+
+info_bairros <- reduce(lista_dfs, ~left_join(.x, .y, by = "BAIRRO"),
+                       .init = info_bairros)
+
+info_bairros <- info_bairros %>%
+  mutate(AREA_IRREGULAR = round(AREA_IRREGULAR, 2)) %>%
+  mutate_at(vars(N_HOSPITAIS, AREA_IRREGULAR, N_TERMINAIS, N_PUBLIC_SCHOOLS,
+                 N_PRIVATE_SCHOOLS, N_HOMICIDIOS, N_SHOPPINGS),
+            ~ifelse(is.na(.), 0, .)) %>%
+  mutate(HOSP_1000 = round((N_HOSPITAIS*1000)/POPULACAO, 5),
+         TERM_1000 = round((N_TERMINAIS*1000)/POPULACAO, 5),
+         SHOP_1000 = round((N_SHOPPINGS*1000)/POPULACAO, 5),
+         ESC_PUB_1000 = round((N_PUBLIC_SCHOOLS*1000)/POPULACAO, 5),
+         ESC_PRI_1000 = round((N_PRIVATE_SCHOOLS*1000)/POPULACAO, 5),
+         HOMI_1000 = round((N_HOMICIDIOS*1000)/POPULACAO, 5),
+         `AREA_VERDE_%` = round((AREA_VERDE*100)/AREA, 2),
+         `AREA_IRREGULAR_%` = round((AREA_IRREGULAR*100)/AREA, 2)) %>%
+  mutate_at(vars(HOSP_1000, TERM_1000, SHOP_1000, ESC_PUB_1000, ESC_PRI_1000,
+                 HOMI_1000, `AREA_VERDE_%`, `AREA_IRREGULAR_%`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  select(-c(N_HOSPITAIS, N_TERMINAIS, AREA_IRREGULAR, AREA, N_PUBLIC_SCHOOLS, 
+            N_PRIVATE_SCHOOLS, N_HOMICIDIOS, N_SHOPPINGS, AREA_VERDE)) %>%
+  as_tibble()
+
+file <- "Info_Bairros.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Curitiba/", file)
+write_xlsx(info_bairros, folder)
+
+```
+
+
+## 5.4. Merging the information with the main dataset
+```{r eval = FALSE}
+
+housing_df <- read_excel("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/CWB_Housing_Dataset.xlsx")
+
+housing_df <- housing_df %>%
+  mutate(BAIRRO = toupper(Neighborhood)) %>%
+  select(-c(Neighborhood, City)) %>%
+  relocate(BAIRRO, .before = "Type") %>%
+  mutate(BAIRRO = case_when(
+    BAIRRO == "AGUA VERDE" ~ "ÁGUA VERDE",
+    BAIRRO == "AHU" ~ "AHÚ",
+    BAIRRO == "ALTO BOQUEIRAO" ~ "ALTO BOQUEIRÃO",
+    BAIRRO == "ALTO DA GLORIA" ~ "ALTO DA GLÓRIA",
+    BAIRRO == "BOQUEIRAO" ~ "BOQUEIRÃO",
+    BAIRRO == "CAPAO DA IMBUIA" ~ "CAPÃO DA IMBUIA",
+    BAIRRO == "CAPAO RASO" ~ "CAPÃO RASO", 
+    BAIRRO == "CENTRO CIVICO" ~ "CENTRO CÍVICO",
+    BAIRRO == "CIC" ~ "CIDADE INDUSTRIAL DE CURITIBA",
+    BAIRRO == "GUAIRA" ~ "GUAÍRA",
+    BAIRRO == "JARDIM BOTANICO" ~ "JARDIM BOTÂNICO",
+    BAIRRO == "JARDIM DAS AMERICAS" ~ "JARDIM DAS AMÉRICAS",
+    BAIRRO == "JUVEVE" ~ "JUVEVÊ",
+    BAIRRO == "LINDOIA" ~ "LINDÓIA",
+    BAIRRO == "MERCES" ~ "MERCÊS",
+    BAIRRO == "MOSSUNGUE" ~ "MOSSUNGUÊ",
+    BAIRRO == "PORTAO" ~ "PORTÃO",
+    BAIRRO == "REBOUCAS" ~ "REBOUÇAS",
+    BAIRRO == "SANTA CANDIDA" ~ "SANTA CÂNDIDA",
+    BAIRRO == "SANTA QUITERIA" ~ "SANTA QUITÉRIA",
+    BAIRRO == "SANTO INACIO" ~ "SANTO INÁCIO",
+    BAIRRO == "SAO BRAZ" ~ "SÃO BRAZ",
+    BAIRRO == "SAO FRANCISCO" ~ "SÃO FRANCISCO",
+    BAIRRO == "SAO JOAO" ~ "SÃO JOÃO",
+    BAIRRO == "SAO LOURENCO" ~ "SÃO LOURENÇO",
+    BAIRRO == "SAO MIGUEL" ~ "SÃO MIGUEL",
+    BAIRRO == "SEMINARIO" ~ "SEMINÁRIO",
+    BAIRRO == "SITIO CERCADO" ~ "SÍTIO CERCADO",
+    BAIRRO == "TABOAO" ~ "TABOÃO",
+    BAIRRO == "TARUMA" ~ "TARUMÃ",
+    BAIRRO == "UMBARA" ~ "UMBARÁ",
+    TRUE ~ BAIRRO
+  ))
+
+housing_df <- left_join(housing_df, info_bairros, by = "BAIRRO")
+
+housing_df <- housing_df %>%
+  rename(Population = POPULACAO) %>%
+  rename(Density = DENSIDADE) %>%
+  rename(Neighborhood = BAIRRO) %>%
+  rename(Hosp_1000 = HOSP_1000) %>%
+  rename(Term_1000 = TERM_1000) %>%
+  rename(Shop_1000 = SHOP_1000) %>%
+  rename(School_Public_1000 = ESC_PUB_1000) %>%
+  rename(School_Private_1000 = ESC_PRI_1000) %>%
+  rename(Homi_1000 = HOMI_1000) %>%
+  rename(`Green_Area_%` = `AREA_VERDE_%`) %>%
+  rename(`Irregular_settelments_%` = `AREA_IRREGULAR_%`) %>%
+  relocate(Hosp_1000, .after = "N_parking_spaces") %>%
+  relocate(Term_1000, .after = "Hosp_1000") %>%
+  relocate(Shop_1000, .after = "Term_1000") %>%
+  relocate(School_Public_1000, .after = "Shop_1000") %>%
+  relocate(School_Private_1000, .after = "School_Public_1000") %>%
+  relocate(`Green_Area_%`, .after = "School_Private_1000") %>%
+  relocate(`Irregular_settelments_%`, .after = "Green_Area_%") %>%
+  relocate(Homi_1000, .after = "Irregular_settelments_%") %>%
+  relocate(Population, .after = "Neighborhood") %>%
+  relocate(Density, .after = "Population")
+
+estratificacao <- estratificacao %>%
+  rename(Neighborhood = NOME)
+
+housing_df <- left_join(housing_df, estratificacao, by = "Neighborhood")
+
+housing_df <- housing_df %>%
+  select(-c(Score_Final, Localidade)) %>%
+  rename(Tier = Estratificação) %>%
+  relocate(Tier, .after = "Neighborhood") %>%
+  mutate(Type = as.factor(Type))
+
+```
+
+
+## 5.5. Separating the data frames by stratification for later regression
+```{r eval = FALSE}
+
+High_tier <- housing_df %>%
+  filter(Tier == "Alto")
+
+file <- "High_tier.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/", file)
+write_xlsx(High_tier, folder)
+
+Medium_tier <- housing_df %>%
+  filter(Tier == "Médio")
+
+file <- "Medium_tier.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/", file)
+write_xlsx(Medium_tier, folder)
+
+Low_tier <- housing_df %>%
+  filter(Tier == "Baixo")
+
+file <- "Low_tier.xlsx"
+folder <- paste0("C:/Users/lsala/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/", file)
+write_xlsx(Low_tier, folder)
+
+```
+
+
