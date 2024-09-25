@@ -1,0 +1,804 @@
+---
+title: "V1_Regressão"
+author: "Lucas Salamuni"
+date: "2024-05-04"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+# 1. Packages
+
+## 1.1. Retrieving Packages
+```{r message=FALSE, warning=FALSE, echo = TRUE}
+
+pacotes <- c("tidyverse", "factoextra", "readxl", "ggplot2", "writexl",
+             "cowplot", "car", "lmtest", "psych", "car", "tseries",
+             "whitestrap", "jtools", "sandwich", "foreign", "plm", "gap") 
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){ 
+  instalador <- pacotes[!pacotes %in% installed.packages()] 
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T)
+} else {
+  sapply(pacotes, require, character = T)
+}
+
+```
+
+---
+
+# 2. Logarithmic Function Form - Second Stage of Rosen
+* NOTE 1 = The second stage of Rosen can be summarized as the calculation of the implicit price derivative of a characteristic through the partial derivative of the previous stage's regression with respect to that same characteristic. Thus, the dependent variable in the second regression is the implicit marginal price, which can be represented as:
+
+* Low Stratification:
+$$ \frac{p}{m^2} = \frac{0,665 \cdot p}{\text{AREA}} $$
+
+* Medium Stratification:
+$$ \frac{p}{m^2} = \frac{0,495 \cdot p}{\text{AREA}} $$
+
+* High Stratification:
+$$ \frac{p}{m^2} = \frac{0,529 \cdot p}{\text{AREA}} $$
+
+* NOTE 2 = Equations according to Fávero (2005) and Fávero et al. (2018).
+
+## 2.1. Low Stratification
+
+### 2.1.1. New Dependent Variable and Second Stage Regression
+```{r echo = TRUE}
+
+low_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Low_tier.xlsx")
+
+low_tier <- low_tier %>%
+  mutate(`P/M` = Rent/Area_sqm)
+
+quantile(low_tier$`P/M`)
+
+Q1 <- quantile(low_tier$`P/M`)[2]
+Q3 <- quantile(low_tier$`P/M`)[4]
+
+IQR <- IQR(low_tier$`P/M`)
+
+below <- (Q1 - (0.85) * IQR)
+below
+above <- (Q3 + (0.85) * IQR)
+above
+
+low_tier <- low_tier %>%
+  filter(`P/M` >= below & `P/M` <= above) %>%
+  select(-`P/M`)
+
+low_tier <- low_tier %>%
+  mutate(`p/m²` = (0.66559*Rent)/Area_sqm)
+
+count(low_tier)
+
+low_tier_ln <- low_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent, `p/m²`), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent, `p/m²`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Term_1000, Homi_1000,
+                 Population, Rent))
+
+low_lm_ln <- lm(`p/m²` ~ ., 
+                data = low_tier_ln)
+
+plot(low_lm_ln)
+qplot(low_lm_ln$residuals)
+
+shapiro.test(low_lm_ln$residuals) 
+jarque.bera.test(low_lm_ln$residuals)
+
+bptest(low_lm_ln) 
+white_test(low_lm_ln) 
+
+durbinWatsonTest(low_lm_ln) 
+
+pairs.panels(low_tier_ln) 
+car::vif(low_lm_ln) 
+
+summary(low_lm_ln)
+
+```
+
+### 2.1.2. Addressing the heteroscedasticity of the model using the Newey-West procedure.
+```{r echo = TRUE}
+
+coeftest(low_lm_ln, vcov = NeweyWest(low_lm_ln))
+
+```
+
+## 2.2. Medium Stratification
+
+### 2.2.1. New Dependent Variable and Second Stage Regression
+```{r echo = TRUE}
+
+mid_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/Medium_tier.xlsx")
+
+mid_tier <- mid_tier %>%
+  mutate(`P/M` = Rent/Area_sqm)
+
+quantile(mid_tier$`P/M`)
+
+Q1 <- quantile(mid_tier$`P/M`)[2]
+Q3 <- quantile(mid_tier$`P/M`)[4]
+
+IQR <- IQR(mid_tier$`P/M`)
+
+below <- (Q1 - (0.85) * IQR)
+below
+above <- (Q3 + (0.85) * IQR)
+above
+
+mid_tier <- mid_tier %>%
+  filter(`P/M` >= below & `P/M` <= above) %>%
+  select(-`P/M`)
+
+mid_tier <- mid_tier %>%
+  mutate(`p/m²` = (0.49592*Rent)/Area_sqm)
+
+count(mid_tier)
+
+mid_tier_ln <- mid_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent, `p/m²`), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent, `p/m²`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Term_1000, Homi_1000,
+                 Population, Rent))
+
+mid_lm_ln <- lm(`p/m²` ~ ., 
+                data = mid_tier_ln)
+
+plot(mid_lm_ln)
+qplot(mid_lm_ln$residuals)
+
+shapiro.test(mid_lm_ln$residuals) 
+jarque.bera.test(mid_lm_ln$residuals)
+
+bptest(mid_lm_ln)
+white_test(mid_lm_ln) 
+
+durbinWatsonTest(mid_lm_ln)
+
+pairs.panels(mid_tier_ln) 
+car::vif(mid_lm_ln)
+
+summary(mid_lm_ln)
+
+```
+
+### 2.2.2. Addressing the heteroscedasticity of the model using the Newey-West procedure.
+```{r echo = TRUE}
+
+coeftest(mid_lm_ln, vcov = NeweyWest(mid_lm_ln))
+
+```
+
+## 2.3. High Stratification
+
+### 2.3.1. New Dependent Variable and Second Stage Regression
+```{r echo = TRUE}
+
+high_tier <- read_excel("C:/Users/Lucas/OneDrive/Lucas Salamuni/Universidades/USP/ZZZ - TCC/Datasets/Housing/High_tier.xlsx")
+
+high_tier <- high_tier %>%
+  mutate(`P/M` = Rent/Area_sqm)
+
+quantile(high_tier$`P/M`)
+
+Q1 <- quantile(high_tier$`P/M`)[2]
+Q3 <- quantile(high_tier$`P/M`)[4]
+
+IQR <- IQR(high_tier$`P/M`)
+
+below <- (Q1 - (0.65) * IQR)
+below
+above <- (Q3 + (0.65) * IQR)
+above
+
+high_tier <- high_tier %>%
+  filter(`P/M` >= below & `P/M` <= above) %>%
+  select(-`P/M`)
+
+high_tier <- high_tier %>%
+  mutate(`p/m²` = (0.52901*Rent)/Area_sqm)
+
+count(high_tier)
+
+high_tier_ln <- high_tier %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent, `p/m²`), log) %>%
+  mutate_at(vars(Area_sqm, N_rooms, N_bathrooms, N_parking_spaces, 
+                 Hosp_1000, Term_1000, Shop_1000, `Green_Area_%`, 
+                 `Irregular_settelments_%`, School_Public_1000, 
+                 School_Private_1000, Homi_1000,
+                 Population, Density, Rent, `p/m²`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  relocate(Rent, .before = "Area_sqm") %>%
+  select(-c(Tier, Neighborhood, Type, Term_1000, Homi_1000,
+                 Population, Rent))
+
+high_lm_ln <- lm(`p/m²` ~ ., 
+                data = high_tier_ln)
+
+plot(high_lm_ln)
+qplot(high_lm_ln$residuals)
+
+shapiro.test(high_lm_ln$residuals) 
+jarque.bera.test(high_lm_ln$residuals)
+
+bptest(high_lm_ln)
+white_test(high_lm_ln)
+
+durbinWatsonTest(high_lm_ln)
+
+pairs.panels(high_tier_ln)
+car::vif(high_lm_ln)
+
+summary(high_lm_ln)
+
+```
+
+### 2.3.2. Addressing the heteroscedasticity of the model using the Newey-West procedure.
+```{r echo = TRUE}
+
+coeftest(high_lm_ln, vcov = NeweyWest(high_lm_ln))
+
+```
+
+---
+
+# 3. Endogeneity Tests
+
+* NOTE 3 = According to Fávero (2005, p. 234-235), it is possible to verify whether a series of variables are endogenous or exogenous through the following procedure: taking into account the regression equation.
+$$ y_1 = \beta_0 + \beta_1y_2 + \beta_2z_1 + \beta_3z_2 + \mu_1 $$
+* where *y_2* is a variable suspected of being endogenous (that is, it may be correlated with the error term *\mu_1*);
+* Thus, a validation of the endogeneity hypothesis involves a new regression, where the variable *y_2* becomes the dependent variable:
+$$ y_2 = \pi_0 + \pi_1z_1 + \pi_2z_2 + \pi_3z_3 + \pi_4z_4 + v_2 $$
+* Thus, *y_2* will not be correlated with *\mu_1* if and only if the error term of the second regression, *v_2*, is not correlated with the error term of the first, *\mu_1*.
+* To this end, the error term *v_2* (or *\hat{v}_2*) is included in the original regression.
+$$ y_1 = \beta_0 + \beta_1y_2 + \beta_2z_1 + \beta_3z_2 + \delta_1\hat{v}_2 + e_1 $$
+* Thus, if *\delta_1 = 0*, then *\mu_1* and *\hat{v}_2* will not be correlated (with validation provided by the t-test, in that if H0 is rejected, then $$ \delta_1 \neq 0 $$ and *y_2* can be considered endogenous).
+
+## 3.1. Low Stratification
+```{r eval = FALSE}
+
+# Variable 1 - Density
+a <- lm(Density ~ Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b)
+
+# Variable 2 - Area_sqm
+a <- lm(Area_sqm ~ Density + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b)
+
+# Variable 3 - N_rooms
+a <- lm(N_rooms ~ Density + Area_sqm + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+# Variable 4 - N_bathrooms 
+a <- lm(N_bathrooms ~ Density + Area_sqm + N_rooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+# Variable 5 - N_parking_spaces -- VERIFICAR (alterar nível de significância?)
+a <- lm(N_parking_spaces ~ Density + Area_sqm + N_rooms + N_bathrooms + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+# Variable 6 - Hosp_1000
+a <- lm(Hosp_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b)
+
+# Variable 7 - Shop_1000
+a <- lm(Shop_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+# Variable 8 - School_Public_1000
+a <- lm(School_Public_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+# Variable 9 - School_Private_1000
+a <- lm(School_Private_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+# Variable 10 - Green_Area_%
+a <- lm(`Green_Area_%` ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 
+        +`Irregular_settelments_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+# Variable 11 - Irregular_settlelments_%
+a <- lm(`Irregular_settelments_%` ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 
+        +`Green_Area_%`,
+       data = low_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+low_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = low_tier_ln)
+summary(b) 
+
+```
+
+## 3.1. Medium Stratification
+```{r eval = FALSE}
+
+# Variable 1 - Density
+a <- lm(Density ~ Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b) 
+
+# Variable 2 - Area_sqm
+a <- lm(Area_sqm ~ Density + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b) 
+
+# Variable 3 - N_rooms
+a <- lm(N_rooms ~ Density + Area_sqm + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b) 
+
+# Variable 4 - N_bathrooms
+a <- lm(N_bathrooms ~ Density + Area_sqm + N_rooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln)
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b) 
+
+# Variable 5 - N_parking_spaces
+a <- lm(N_parking_spaces ~ Density + Area_sqm + N_rooms + N_bathrooms + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln)
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b) 
+
+# Variable 6 - Hosp_1000
+a <- lm(Hosp_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b)
+
+# Variable 7 - Shop_1000
+a <- lm(Shop_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b)
+
+# Variable 8 - School_Public_1000
+a <- lm(School_Public_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b) 
+
+# Variable 9 - School_Private_1000
+a <- lm(School_Private_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln)
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b)
+
+# Variable 10 - Green_Area_%
+a <- lm(`Green_Area_%` ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 
+        +`Irregular_settelments_%`,
+       data = mid_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b)
+
+# Variable 11 - Irregular_settlelments_%
+a <- lm(`Irregular_settelments_%` ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 
+        +`Green_Area_%`,
+       data = mid_tier_ln)
+summary(a)
+residuals <- residuals(a)
+mid_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = mid_tier_ln)
+summary(b)
+
+```
+
+## 3.1. High Stratification
+```{r eval = FALSE}
+
+# Variable 1 - Density
+a <- lm(Density ~ Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b) 
+
+# Variable 2 - Area_sqm
+a <- lm(Area_sqm ~ Density + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b)
+
+# Variable 3 - N_rooms
+a <- lm(N_rooms ~ Density + Area_sqm + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b) 
+
+# Variable 4 - N_bathrooms
+a <- lm(N_bathrooms ~ Density + Area_sqm + N_rooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b)
+
+# Variable 5 - N_parking_spaces
+a <- lm(N_parking_spaces ~ Density + Area_sqm + N_rooms + N_bathrooms + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b) 
+
+# Variable 6 - Hosp_1000
+a <- lm(Hosp_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Shop_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b)
+
+# Variable 7 - Shop_1000
+a <- lm(Shop_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + School_Public_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b) 
+
+# Variable 8 - School_Public_1000
+a <- lm(School_Public_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Private_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln)
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b) 
+
+# Variable 9 - School_Private_1000
+a <- lm(School_Private_1000 ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + `Green_Area_%` 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b)
+
+# Variable 10 - Green_Area_%
+a <- lm(`Green_Area_%` ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 
+        +`Irregular_settelments_%`,
+       data = high_tier_ln)
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b)
+
+# Variable 11 - Irregular_settlelments_%
+a <- lm(`Irregular_settelments_%` ~ Density + Area_sqm + N_rooms + N_bathrooms + N_parking_spaces + Hosp_1000 + Shop_1000 + School_Public_1000 + School_Private_1000 
+        +`Green_Area_%`,
+       data = high_tier_ln) 
+summary(a)
+residuals <- residuals(a)
+high_tier_ln$Residuals <- ifelse(is.na(log(residuals)) | is.nan(log(residuals)), 0, log(residuals))
+
+b <- lm(`p/m²` ~ ., 
+        data = high_tier_ln)
+summary(b)
+
+```
+
+---
+
+# 4. Chow Tests
+
+## 4.1. Low vs. Medium Stratifications
+```{r echo = TRUE}
+
+y1 <- log(low_tier$`p/m²`)
+x1 <- low_tier %>%
+  select(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`), log) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  as.matrix()
+
+y2 <- log(mid_tier$`p/m²`)
+x2 <- mid_tier %>%
+  select(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`), log) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  as.matrix()
+
+chow.test(y1, x1, y2, x2)
+
+```
+
+## 4.2. Low vs. High Stratifications
+```{r echo = TRUE}
+
+y1 <- log(low_tier$`p/m²`)
+x1 <- low_tier %>%
+  select(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`), log) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  as.matrix()
+
+y2 <- log(high_tier$`p/m²`)
+x2 <- high_tier %>%
+  select(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`), log) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  as.matrix()
+
+chow.test(y1, x1, y2, x2)
+
+```
+
+## 4.3. Medium vs. High Stratifications
+```{r echo = TRUE}
+
+y1 <- log(mid_tier$`p/m²`)
+x1 <- mid_tier %>%
+  select(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`), log) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  as.matrix()
+
+y2 <- log(high_tier$`p/m²`)
+x2 <- high_tier %>%
+  select(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`), log) %>%
+  mutate_at(vars(Density, Area_sqm, N_rooms, N_bathrooms, N_parking_spaces,
+         Hosp_1000, Shop_1000, School_Public_1000, School_Private_1000,
+         `Green_Area_%`, `Irregular_settelments_%`),
+            ~ifelse(is.infinite(.), 0, .)) %>%
+  as.matrix()
+
+chow.test(y1, x1, y2, x2)
+
+```
